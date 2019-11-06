@@ -39,7 +39,8 @@ class BackgroundTaskRunner():
         self._running = False
 
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.logger = logging.getLogger(self.name)
+
+        self.logger = getattr(self, "logger", logging.getLogger(self.name))
         self._background_tasks = {}
         # run watcher in background
         if start_in_background:
