@@ -4,7 +4,7 @@ import threading
 import time
 
 
-class BackgroundTask():
+class BackgroundTask:
     def __init__(self, id, method, delay):
         self.delay = delay
         self.method = method
@@ -27,7 +27,7 @@ class BackgroundTask():
         self.method()
 
 
-class BackgroundTaskRunner():
+class BackgroundTaskRunner:
     def __init__(self, background_sleep_time=1, start_in_background=True):
         """
         :param start_in_background: weather the task runner should start in background
@@ -75,5 +75,7 @@ class BackgroundTaskRunner():
         task_id = random.randint(1, 10 ** 6)
         while task_id in self._background_tasks:
             task_id = random.randint(1, 10 ** 6)
-        self._background_tasks[task_id] = BackgroundTask(id=task_id, method=method, delay=minimum_call_delay)
+        self._background_tasks[task_id] = BackgroundTask(
+            id=task_id, method=method, delay=minimum_call_delay
+        )
         return task_id
