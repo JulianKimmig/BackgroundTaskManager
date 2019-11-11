@@ -2,6 +2,7 @@ import logging
 import random
 import threading
 import time
+import asyncio
 
 
 class BackgroundTask:
@@ -28,7 +29,8 @@ class BackgroundTask:
 
 
 class BackgroundTaskRunner:
-    def __init__(self, background_sleep_time=1, start_in_background=True):
+    def __init__(self, background_sleep_time=1, start_in_background=True,
+                 use_asyncio=True):
         """
         :param start_in_background: weather the task runner should start in background
         :type start_in_background: bool
@@ -43,7 +45,12 @@ class BackgroundTaskRunner:
         self.logger = getattr(self, "logger", logging.getLogger(self.name))
         self._background_tasks = {}
         # run watcher in background
-        if start_in_background:
+        self._time = time.time()
+        self.use_asyncio = use_asyncio
+        if self.use_asyncio:
+            self.async_tasks = []
+            self.async_tasks.append(self.async_run_forever)
+        if start_in_background and not self.use_asyncio:
             threading.Thread(target=self.run_forever, daemon=True).start()
 
     def run_background_tasks(self):
@@ -55,6 +62,17 @@ class BackgroundTaskRunner:
 
     def __del__(self):
         self.stop()
+
+    async def async_run_forever(self):
+        # if running, then stop
+        if self._running:
+            self.stop()
+        self._running = True
+        self.logger.info(f"start {self.name}")
+        while self._running:
+            self._time = time.time()
+            self.run_background_tasks()
+            await asyncio.sleep(self.background_sleep_time)
 
     def run_forever(self):
         # if running, then stop
