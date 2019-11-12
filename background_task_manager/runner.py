@@ -30,7 +30,7 @@ class BackgroundTask:
 
 class BackgroundTaskRunner:
     def __init__(self, background_sleep_time=1, start_in_background=True,
-                 use_asyncio=True):
+                 use_asyncio=False):
         """
         :param start_in_background: weather the task runner should start in background
         :type start_in_background: bool
