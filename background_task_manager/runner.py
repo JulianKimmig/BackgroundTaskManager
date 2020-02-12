@@ -3,20 +3,19 @@ import logging
 import random
 import threading
 import time
-from asyncio import iscoroutine
-from inspect import iscoroutinefunction
 
 
 class BackgroundTask:
-    def __init__(self, id, method, delay, callings=-1):
-        self.callings = callings
+    def __init__(self, id, method, delay, max_callings=None):
+        self.remain_callings = max_callings
         self.delay = delay
         self.method = method
         self.id = id
         self._last_run = time.time()
 
     def check_for_run(self, time=None):
-        if self.callings == 0:
+        if self.remain_callings == 0:
+            self.stop()
             return None
 
         if self.delay is None:
@@ -31,6 +30,8 @@ class BackgroundTask:
         if time is None:
             time = time.time()
         self._last_run = time
+        if self.remain_callings:
+            self.remain_callings -= 1
         return self.method()
 
     def stop(self):
@@ -39,142 +40,44 @@ class BackgroundTask:
 
 USE_ASYNCIO = False
 
-
 def set_asyncio(use=USE_ASYNCIO):
     global USE_ASYNCIO
     USE_ASYNCIO = use
 
-
 def get_asyncio():
     return USE_ASYNCIO
 
-class BackgroundTaskRunner:
+
+_DUMMYRUNTIME = 0.5
+
+
+class AbstractBackgroundTaskRunner():
     ALL_RUNNINGS = set()
-    def __init__(self, background_sleep_time=1, start_in_background=True,
-                 use_asyncio=None):
-        """
-        :param start_in_background: weather the task runner should start in background
-        :type start_in_background: bool
-        :param background_sleep_time: time in seconds betwen the call of the background tasks
-        :type background_sleep_time: float
-        """
-        if use_asyncio is None:
-            use_asyncio = get_asyncio()
+
+    def __init__(self, background_sleep_time=1):
         self.background_sleep_time = background_sleep_time
         self._running = False
 
         if not hasattr(self, "name"):
             self.name = self.__class__.__name__
-
         self.logger = getattr(self, "logger", logging.getLogger(self.name))
         self._background_tasks = {}
 
         # run watcher in background
         self._time = time.time()
-        self.use_asyncio = use_asyncio
+        self._last_run = 0
+        self.background_task = None
 
-        if self.use_asyncio:
-            self.background_task = asyncio.Task(self.async_run_forever())
-
-        if start_in_background:
-            if self.use_asyncio:
-                pass
-            else:
-                self.background_task = threading.Thread(target=self.run_forever, daemon=True)
-                self.background_task.start()
-        BackgroundTaskRunner.ALL_RUNNINGS.add(self)
-
-    def register_background_task(self, method, minimum_call_delay=None, callings=-1):
-        if not callable(method):
-            self.logger.error("cannot register background task, method is not callable")
-            return
-
-        task_id = random.randint(1, 10 ** 6)
-        while task_id in self._background_tasks:
-            task_id = random.randint(1, 10 ** 6)
-        self._background_tasks[task_id] = BackgroundTask(
-            id=task_id, method=method, delay=minimum_call_delay, callings=callings
-        )
-        return task_id
-
-    def stop(self):
-        for id in self._background_tasks:
-            self.stop_task(id)
-
-        self._running = False
-
-    async def async_run_forever(self):
-        # if running, then stop
-        if self._running:
-            self.stop()
-        self._running = True
-        self.logger.info(f"start {self.name}")
-        while self._running:
-            self._time = time.time()
-            self.run_background_tasks()
-            await asyncio.sleep(self.background_sleep_time)
-
-    def run_forever(self):
-        # if running, then stop
-        if self._running:
-            self.stop()
-        self._running = True
-        self.logger.info(f"start {self.name}")
-        while self._running:
-            self._time = time.time()
-            self.run_background_tasks()
-            time.sleep(self.background_sleep_time)
+        AbstractBackgroundTaskRunner.ALL_RUNNINGS.add(self)
 
     def run_background_tasks(self):
         for id, task in self._background_tasks.items():
             task.check_for_run(self._time)
 
-    def run_task(self, target, blocking=False, callback=None, *args, **kwargs):
-        if blocking:
-            r = target(*args, **kwargs)
-            if iscoroutine(r):
-                r = asyncio.get_event_loop().run_until_complete(asyncio.gather(r))
-            if callback:
-                return callback(r)
-            else:
-                return r
-
-        else:
-            if self.use_asyncio:
-                async def wrapper():
-                    if iscoroutinefunction(target):
-                        sr = await target(*args, **kwargs)
-                        if iscoroutinefunction(callback):
-                            return await callback(sr)
-                    else:
-                        def thrad_func():
-                            if callback:
-                                callback(target(*args, **kwargs))
-                            else:
-                                target(*args, **kwargs)
-
-                        threading.Thread(target=thrad_func, daemon=True).start()
-
-                r = wrapper()
-                try:
-                    asyncio.get_event_loop().create_task(r)
-                except:
-                    asyncio.set_event_loop(asyncio.new_event_loop())
-                    asyncio.get_event_loop().run_until_complete(r)
-                    asyncio.set_event_loop(None)
-            else:
-                def wrapper():
-                    r = target(*args, **kwargs)
-                    if iscoroutine(r):
-                        asyncio.set_event_loop(asyncio.new_event_loop())
-                        r = asyncio.get_event_loop().run_until_complete(asyncio.gather(r))
-                    if callback:
-                        if iscoroutinefunction(callback):
-                            asyncio.get_event_loop().run_until_complete(asyncio.gather(callback(r)))
-                        else:
-                            callback(r)
-
-                threading.Thread(target=wrapper, daemon=True).start()
+    def stop(self):
+        for id in self._background_tasks:
+            self.stop_task(id)
+        self._running = False
 
     def stop_task(self, id):
         if id in self._background_tasks:
@@ -184,9 +87,112 @@ class BackgroundTaskRunner:
     def __del__(self):
         self.stop()
         try:
-            BackgroundTaskRunner.ALL_RUNNINGS.remove(self)
+            AbstractBackgroundTaskRunner.ALL_RUNNINGS.remove(self)
         except:
             pass
+
+    def _check_run(self):
+        self._time = time.time()
+        if (self._time + self.background_sleep_time >= self._last_run):
+            self._last_run = self._time
+            self.run_background_tasks()
+
+    def register_background_task(self, method, minimum_call_delay=None, max_callings=None):
+        if not callable(method):
+            self.logger.error("cannot register background task, method is not callable")
+            return
+
+        task_id = random.randint(1, 10 ** 6)
+        while task_id in self._background_tasks:
+            task_id = random.randint(1, 10 ** 6)
+        self._background_tasks[task_id] = BackgroundTask(
+            id=task_id, method=method, delay=minimum_call_delay, max_callings=max_callings
+        )
+        return task_id
+
+    def run_forever(self):
+        raise NotImplementedError("run_forever not extended")
+
+    def run_in_background(self):
+        raise NotImplementedError("run_in_background not extended")
+
+    def run_once(self, func, callback=None, *args, **kwargs):
+        def f():
+            callback(func(*args, **kwargs))
+
+        self.register_background_task(f, minimum_call_delay=0, max_callings=1)
+
+
+class ThreadedBackgroundTaskRunner(AbstractBackgroundTaskRunner):
+    def __init__(self, background_sleep_time=1, start_in_background=True):
+        super().__init__(background_sleep_time=background_sleep_time)
+        if start_in_background:
+            self.run_in_background()
+
+    def run_in_background(self):
+        new_task = threading.Thread(target=self.run_forever, daemon=True)
+        new_task.start()
+        while self.background_task:  # waits fo the old runner to finish
+            time.sleep(0.1)
+        self.background_task = new_task
+
+    def run_forever(self):
+        # if running, then stop
+        if self._running:
+            self.stop()
+        self._running = True
+        self.logger.info(f"start {self.name}")
+        while self._running:
+            self._check_run()
+            time.sleep(min(self.background_sleep_time, _DUMMYRUNTIME))
+
+    def stop(self):
+        super().stop()
+        try:
+            self.background_task.join(_DUMMYRUNTIME * 2)
+        except:
+            pass
+        self.background_task = None
+
+
+class AsyncBackgroundTaskRunner(AbstractBackgroundTaskRunner):
+    def __init__(self, background_sleep_time=1, start_in_background=False):
+        super().__init__(background_sleep_time=background_sleep_time)
+
+        if start_in_background:
+            self.logger.critical(
+                "start in background on a async runner will create a new thread containing a serperate event loop. please use the corona of 'run_forever' and work it manually!!!!")
+
+    def run_in_background(self):
+        def threading_event_runner(loop):
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete()
+
+        self.background_task = asyncio.new_event_loop()
+        asyncio.run_coroutine_threadsafe(self.run_forever(), self.background_task)
+        time.sleep(0.2)  # allow the loop to start
+        threading.Thread(target=threading_event_runner, daemon=True).start()
+
+    async def run_forever(self):
+        # if running, then stop
+        if self._running:
+            self.stop()
+        self._running = True
+        self.logger.info(f"start {self.name}")
+        while self._running:
+            self._check_run()
+            await asyncio.sleep(min(self.background_sleep_time, _DUMMYRUNTIME))
+
+
+def BackgroundTaskRunner(background_sleep_time=1, start_in_background=True, use_asyncio=None):
+    if use_asyncio is None:
+        use_asyncio = get_asyncio()
+    if use_asyncio:
+        return AsyncBackgroundTaskRunner(background_sleep_time=background_sleep_time,
+                                         start_in_background=start_in_background)
+    else:
+        return ThreadedBackgroundTaskRunner(background_sleep_time=background_sleep_time,
+                                            start_in_background=start_in_background)
 
 
 def run_all_until_done():
