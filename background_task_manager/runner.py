@@ -62,9 +62,7 @@ class AbstractBackgroundTaskRunner():
         self.background_sleep_time = background_sleep_time
         self._running = False
 
-        if not hasattr(self, "name"):
-            self.name = self.__class__.__name__
-        self.logger = getattr(self, "logger", logging.getLogger(self.name))
+        self.logger = getattr(self, "logger", logging.getLogger(getattr(self, "name", self.__class__.__name__)))
         self._background_tasks = {}
 
         # run watcher in background
