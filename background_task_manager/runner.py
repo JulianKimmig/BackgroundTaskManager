@@ -219,17 +219,25 @@ def BackgroundTaskRunner(background_sleep_time=1, start_in_background=True, use_
 
 def run_all_until_done():
     asnyc_tasks = set()
-    thrading_tasks = set()
-    print(BackgroundTaskRunner.ALL_RUNNINGS)
-    for btr in BackgroundTaskRunner.ALL_RUNNINGS:
-        print(btr.background_task)
-        if isinstance(btr.background_task, asyncio.Task):
-            asnyc_tasks.add(btr.background_task)
-        if isinstance(btr.background_task, threading.Thread):
-            thrading_tasks.add(btr.background_task)
+    threading_tasks = set()
+    threading_tasks_runner = set()
+    async_tasks_runner = set()
 
-    print(asnyc_tasks, thrading_tasks)
+    for btr in AbstractBackgroundTaskRunner.ALL_RUNNINGS:
+        if isinstance(btr, ThreadedBackgroundTaskRunner):
+            threading_tasks_runner.add(btr)
+        elif isinstance(btr, AsyncBackgroundTaskRunner):
+            async_tasks_runner.add(btr)
+
+    for runner in threading_tasks_runner:
+        runner.run_in_background()
+        threading_tasks.add(runner.background_task)
+
+    for runner in async_tasks_runner:
+        asnyc_tasks.add(runner.run_forever())
+
     asyncio.get_event_loop().run_until_complete(asyncio.gather(*asnyc_tasks))
-    for t in thrading_tasks:
+
+    for t in threading_tasks:
         if t.isAlive():
             t.join()
